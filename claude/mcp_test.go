@@ -138,6 +138,56 @@ func TestWriteMCPConfigWithCWD(t *testing.T) {
 	}
 }
 
+func TestCleanupMCPConfig(t *testing.T) {
+	// Create a temp file to clean up.
+	servers := []MCPServerConfig{
+		{Name: "test", Command: "echo"},
+	}
+	path, err := WriteMCPConfig(servers)
+	if err != nil {
+		t.Fatalf("WriteMCPConfig failed: %v", err)
+	}
+
+	// File should exist.
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("config file should exist: %v", err)
+	}
+
+	// Clean up.
+	if err := CleanupMCPConfig(path); err != nil {
+		t.Fatalf("CleanupMCPConfig failed: %v", err)
+	}
+
+	// File should be gone.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("config file should not exist after cleanup")
+	}
+}
+
+func TestCleanupMCPConfigEmptyPath(t *testing.T) {
+	// Should be a no-op.
+	if err := CleanupMCPConfig(""); err != nil {
+		t.Errorf("CleanupMCPConfig with empty path should not error: %v", err)
+	}
+}
+
+func TestMCPConfigPathPrecedence(t *testing.T) {
+	// When MCPConfigPath is set, MCPServers should be ignored.
+	opts := Options{
+		MCPConfigPath: "/tmp/my-existing-config.json",
+		MCPServers: []MCPServerConfig{
+			{Name: "ignored", Command: "should-not-be-written"},
+		},
+	}
+
+	tOpts, cleanup := toTransportOptions(&opts)
+	defer cleanup()
+
+	if tOpts.MCPConfigPath != "/tmp/my-existing-config.json" {
+		t.Errorf("expected MCPConfigPath '/tmp/my-existing-config.json', got %q", tOpts.MCPConfigPath)
+	}
+}
+
 func TestWriteMCPConfigFilePermissions(t *testing.T) {
 	servers := []MCPServerConfig{
 		{Name: "test", Command: "echo"},
