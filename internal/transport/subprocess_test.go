@@ -93,6 +93,16 @@ func TestBuildArgsPromptAlwaysLast(t *testing.T) {
 	}
 }
 
+func TestBuildArgsWithSessionID(t *testing.T) {
+	args := buildArgs("test", &Options{SessionID: "sess_123"})
+	assertContains(t, args, "--session-id", "sess_123")
+}
+
+func TestBuildArgsWithMCPConfig(t *testing.T) {
+	args := buildArgs("test", &Options{MCPConfigPath: "/tmp/mcp.json"})
+	assertContains(t, args, "--mcp-config", "/tmp/mcp.json")
+}
+
 func TestSubprocessTransportCloseWithoutStart(t *testing.T) {
 	st := &SubprocessTransport{}
 	// Close on unstarted transport should not panic

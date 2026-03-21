@@ -89,7 +89,7 @@ func toTransportOptions(opts *Options) *transport.Options {
 	if opts == nil {
 		return nil
 	}
-	return &transport.Options{
+	tOpts := &transport.Options{
 		Model:              opts.Model,
 		SystemPrompt:       opts.SystemPrompt,
 		AppendSystemPrompt: opts.AppendSystemPrompt,
@@ -103,4 +103,16 @@ func toTransportOptions(opts *Options) *transport.Options {
 		Env:                opts.Env,
 		SessionID:          opts.SessionID,
 	}
+
+	// Write MCP config if servers are configured.
+	if len(opts.MCPServers) > 0 {
+		configPath, err := WriteMCPConfig(opts.MCPServers)
+		if err == nil {
+			tOpts.MCPConfigPath = configPath
+		}
+		// If WriteMCPConfig fails, we silently skip MCP config.
+		// The tools just won't be available.
+	}
+
+	return tOpts
 }

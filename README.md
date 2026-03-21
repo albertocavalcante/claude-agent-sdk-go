@@ -79,6 +79,7 @@ Sends a one-shot prompt to the Claude CLI and returns a channel that streams `Me
 | `PermissionMode`     | `string`            | `"default"`, `"acceptEdits"`, `"bypassPermissions"` |
 | `CLIPath`            | `string`            | Path to the `claude` binary (default: from PATH)  |
 | `Env`                | `map[string]string` | Extra environment variables for the CLI process   |
+| `MCPServers`         | `[]MCPServerConfig` | External MCP servers to connect to                |
 
 ### Message Types
 
@@ -98,6 +99,32 @@ Sends a one-shot prompt to the Claude CLI and returns a channel that streams `Me
 | `ToolUseBlock`    | Tool invocation           |
 | `ToolResultBlock` | Tool execution result     |
 | `ThinkingBlock`   | Extended thinking content |
+
+### MCP Server Configuration
+
+Connect external MCP tool servers to give Claude access to custom tools:
+
+```go
+client := claude.NewClient(claude.Options{
+    MCPServers: []claude.MCPServerConfig{
+        {
+            Name:    "filesystem",
+            Command: "npx",
+            Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+        },
+    },
+})
+```
+
+The SDK writes a temporary MCP config file and passes it to the CLI via `--mcp-config`.
+
+| Field     | Type                | Description                              |
+|-----------|---------------------|------------------------------------------|
+| `Name`    | `string`            | Server identifier                        |
+| `Command` | `string`            | Executable to run                        |
+| `Args`    | `[]string`          | Command-line arguments                   |
+| `Env`     | `map[string]string` | Environment variables for the server     |
+| `CWD`     | `string`            | Working directory for the server process |
 
 ## Architecture
 

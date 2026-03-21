@@ -157,6 +157,9 @@ func buildArgs(prompt string, opts *Options) []string {
 	if opts.SessionID != "" {
 		args = append(args, "--session-id", opts.SessionID)
 	}
+	if opts.MCPConfigPath != "" {
+		args = append(args, "--mcp-config", opts.MCPConfigPath)
+	}
 
 	args = append(args, "-p", prompt)
 	return args

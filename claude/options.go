@@ -43,4 +43,8 @@ type Options struct {
 
 	// SessionID resumes a previous session. If empty, a new session is created.
 	SessionID string
+
+	// MCPServers configures external MCP servers for the Claude CLI.
+	// Each server exposes tools that Claude can use during conversation.
+	MCPServers []MCPServerConfig
 }

@@ -23,6 +23,7 @@ type Options struct {
 	CLIPath            string
 	Env                map[string]string
 	SessionID          string
+	MCPConfigPath      string
 }
 
 // RawLineOrError carries either a raw JSON line from the CLI's stdout or an error.
