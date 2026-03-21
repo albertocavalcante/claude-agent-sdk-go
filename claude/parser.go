@@ -2,7 +2,6 @@ package claude
 
 import (
 	"encoding/json"
-	"log"
 )
 
 // rawEnvelope is used for intermediate JSON unmarshalling to inspect the type field.
@@ -60,7 +59,6 @@ func ParseMessage(data []byte) (Message, error) {
 	case "system":
 		return parseSystemMessage(data)
 	default:
-		log.Printf("claude-agent-sdk: unknown message type %q, wrapping as UnknownMessage", envelope.Type)
 		raw := make(json.RawMessage, len(data))
 		copy(raw, data)
 		return &UnknownMessage{

@@ -154,6 +154,9 @@ func buildArgs(prompt string, opts *Options) []string {
 	if opts.MaxTurns > 0 {
 		args = append(args, "--max-turns", strconv.Itoa(opts.MaxTurns))
 	}
+	if opts.SessionID != "" {
+		args = append(args, "--session-id", opts.SessionID)
+	}
 
 	args = append(args, "-p", prompt)
 	return args

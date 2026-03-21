@@ -36,4 +36,11 @@ type Options struct {
 
 	// Env provides additional environment variables for the CLI subprocess.
 	Env map[string]string
+
+	// Hooks registers callbacks for lifecycle events.
+	// Used by ClaudeClient to fire callbacks during message processing.
+	Hooks []HookRegistration
+
+	// SessionID resumes a previous session. If empty, a new session is created.
+	SessionID string
 }

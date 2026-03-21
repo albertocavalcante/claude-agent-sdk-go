@@ -22,6 +22,7 @@ type Options struct {
 	PermissionMode     string
 	CLIPath            string
 	Env                map[string]string
+	SessionID          string
 }
 
 // RawLineOrError carries either a raw JSON line from the CLI's stdout or an error.

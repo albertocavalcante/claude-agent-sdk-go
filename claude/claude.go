@@ -101,5 +101,6 @@ func toTransportOptions(opts *Options) *transport.Options {
 		PermissionMode:     opts.PermissionMode,
 		CLIPath:            opts.CLIPath,
 		Env:                opts.Env,
+		SessionID:          opts.SessionID,
 	}
 }
