@@ -46,7 +46,9 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 	go func() {
 		defer close(ch)
 
-		tOpts := toTransportOptions(&opts)
+		tOpts, cleanup := toTransportOptions(&opts)
+		defer cleanup()
+
 		if err := t.Start(ctx, prompt, tOpts); err != nil {
 			ch <- MessageOrError{Err: err}
 			return
@@ -85,9 +87,13 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 }
 
 // toTransportOptions converts public Options to the internal transport Options.
-func toTransportOptions(opts *Options) *transport.Options {
+// It returns the options and a cleanup function that removes any auto-generated
+// MCP config files. The cleanup function is always non-nil and safe to call.
+func toTransportOptions(opts *Options) (*transport.Options, func()) {
+	noop := func() {}
+
 	if opts == nil {
-		return nil
+		return nil, noop
 	}
 	tOpts := &transport.Options{
 		Model:              opts.Model,
@@ -104,15 +110,21 @@ func toTransportOptions(opts *Options) *transport.Options {
 		SessionID:          opts.SessionID,
 	}
 
+	// MCPConfigPath takes precedence over MCPServers.
+	if opts.MCPConfigPath != "" {
+		tOpts.MCPConfigPath = opts.MCPConfigPath
+		return tOpts, noop // caller manages the file lifecycle
+	}
+
 	// Write MCP config if servers are configured.
 	if len(opts.MCPServers) > 0 {
 		configPath, err := WriteMCPConfig(opts.MCPServers)
 		if err == nil {
 			tOpts.MCPConfigPath = configPath
+			return tOpts, func() { _ = CleanupMCPConfig(configPath) }
 		}
 		// If WriteMCPConfig fails, we silently skip MCP config.
-		// The tools just won't be available.
 	}
 
-	return tOpts
+	return tOpts, noop
 }

@@ -46,5 +46,12 @@ type Options struct {
 
 	// MCPServers configures external MCP servers for the Claude CLI.
 	// Each server exposes tools that Claude can use during conversation.
+	// If both MCPServers and MCPConfigPath are set, MCPConfigPath takes
+	// precedence and MCPServers is ignored.
 	MCPServers []MCPServerConfig
+
+	// MCPConfigPath is an optional path to a pre-existing MCP config JSON file.
+	// When set, the SDK uses this file directly instead of auto-generating one
+	// from MCPServers. The caller is responsible for managing the file's lifecycle.
+	MCPConfigPath string
 }

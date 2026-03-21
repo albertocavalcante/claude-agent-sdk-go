@@ -51,9 +51,21 @@ type mcpServerEntry struct {
 	CWD     string            `json:"cwd,omitempty"`
 }
 
+// CleanupMCPConfig removes a temporary MCP config file previously created by
+// WriteMCPConfig. It is safe to call with an empty path (returns nil).
+// This is provided as a convenience for callers who manage the config lifecycle
+// manually; the SDK's Query and ClaudeClient.Query functions handle cleanup
+// automatically for auto-generated configs.
+func CleanupMCPConfig(path string) error {
+	if path == "" {
+		return nil
+	}
+	return os.Remove(path)
+}
+
 // WriteMCPConfig writes the MCP server configurations to a temporary JSON file
 // suitable for passing to the Claude CLI's --mcp-config flag.
-// The caller is responsible for cleaning up the file when done.
+// The caller is responsible for cleaning up the file when done (see CleanupMCPConfig).
 func WriteMCPConfig(servers []MCPServerConfig) (string, error) {
 	if len(servers) == 0 {
 		return "", fmt.Errorf("no MCP servers provided")
