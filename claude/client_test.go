@@ -525,6 +525,26 @@ func TestClientSessionIDPreservedWithExistingID(t *testing.T) {
 	}
 }
 
+func TestClientClose(t *testing.T) {
+	client := NewClient(Options{})
+
+	if err := client.Close(); err != nil {
+		t.Fatalf("Close failed: %v", err)
+	}
+
+	// Query after close should return an error.
+	ctx := context.Background()
+	var gotError bool
+	for msg := range client.Query(ctx, "test") {
+		if msg.Err != nil {
+			gotError = true
+		}
+	}
+	if !gotError {
+		t.Error("expected error from query on closed client")
+	}
+}
+
 func TestClientGeneratesSessionID(t *testing.T) {
 	mock := &transport.MockTransport{
 		RawLines: []json.RawMessage{
@@ -761,7 +781,7 @@ func TestClientQueryStartError(t *testing.T) {
 	}
 }
 
-func TestMatchToolPattern(t *testing.T) {
+func TestHookRunnerMatchToolPattern(t *testing.T) {
 	tests := []struct {
 		name     string
 		pattern  string
@@ -805,10 +825,10 @@ func TestMatchToolPattern(t *testing.T) {
 			want:     false,
 		},
 		{
-			name:     "invalid regex does not match",
+			name:     "invalid regex falls back to match all",
 			pattern:  "[invalid",
 			toolName: "Bash",
-			want:     false,
+			want:     true, // invalid patterns are caught by ValidateHooks; hookRunner treats compile failure as match-all
 		},
 		{
 			name:     "wildcard match",
@@ -820,7 +840,10 @@ func TestMatchToolPattern(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchToolPattern(tt.pattern, tt.toolName)
+			runner := newHookRunner([]HookRegistration{
+				{Event: HookPreToolUse, ToolPattern: tt.pattern},
+			})
+			got := runner.matchToolPattern(0, tt.toolName)
 			if got != tt.want {
 				t.Errorf("matchToolPattern(%q, %q) = %v, want %v", tt.pattern, tt.toolName, got, tt.want)
 			}

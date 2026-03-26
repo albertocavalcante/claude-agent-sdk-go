@@ -1,13 +1,17 @@
 # Claude Agent SDK for Go
 
-A Go-idiomatic SDK for building agents powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code). This SDK spawns the `claude` CLI as a subprocess and streams structured messages back over Go channels.
+[![CI](https://github.com/albertocavalcante/claude-agent-sdk-go/actions/workflows/ci.yml/badge.svg)](https://github.com/albertocavalcante/claude-agent-sdk-go/actions/workflows/ci.yml)
+[![Go Reference](https://pkg.go.dev/badge/github.com/albertocavalcante/claude-agent-sdk-go.svg)](https://pkg.go.dev/github.com/albertocavalcante/claude-agent-sdk-go)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+A Go SDK for building agents powered by [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Spawns the `claude` CLI as a subprocess and streams structured messages over Go channels.
 
 > **Note:** This is a **community project** and is not officially maintained by Anthropic. For official SDKs, see the [TypeScript](https://github.com/anthropics/claude-code-sdk-python) and [Python](https://github.com/anthropics/claude-code-sdk-python) Agent SDKs.
 
 ## Prerequisites
 
-- **Claude CLI** >= 2.0.0 (install via `npm install -g @anthropic-ai/claude-code`)
-- **Go** >= 1.21
+- **Claude CLI** >= 2.0.0 (`npm install -g @anthropic-ai/claude-code`)
+- **Go** >= 1.25
 
 ## Installation
 
@@ -32,7 +36,7 @@ func main() {
     ctx := context.Background()
 
     for msg := range claude.Query(ctx, "What is 2+2? Reply in one word.", claude.Options{
-        Model: "haiku",
+        Model: claude.ModelHaiku,
     }) {
         if msg.Err != nil {
             fmt.Fprintf(os.Stderr, "Error: %v\n", msg.Err)
@@ -54,21 +58,87 @@ func main() {
 }
 ```
 
-## API Reference
-
-### `claude.Query`
+## Persistent Sessions
 
 ```go
-func Query(ctx context.Context, prompt string, opts Options) <-chan MessageOrError
+client := claude.NewClient(claude.Options{
+    Model: claude.ModelSonnet,
+})
+defer client.Close()
+
+// First turn
+for msg := range client.Query(ctx, "Remember: my name is Alice") {
+    // handle messages...
+}
+
+// Second turn resumes the same session
+for msg := range client.Query(ctx, "What is my name?") {
+    // handle messages...
+}
+
+fmt.Println("Session:", client.SessionID())
 ```
 
-Sends a one-shot prompt to the Claude CLI and returns a channel that streams `MessageOrError` values. The channel is closed when the conversation ends or the context is cancelled.
+## Hooks
 
-### `claude.Options`
+Register callbacks for lifecycle events:
+
+```go
+client := claude.NewClient(claude.Options{
+    Hooks: []claude.HookRegistration{
+        {
+            Event: claude.HookPreToolUse,
+            Callback: func(ctx context.Context, e claude.HookInput) (claude.HookOutput, error) {
+                fmt.Printf("Tool: %s\n", e.ToolName)
+                return claude.HookOutput{}, nil
+            },
+        },
+        {
+            Event:       claude.HookPostToolUse,
+            ToolPattern: "^Bash$", // only match Bash tool
+            Callback: func(ctx context.Context, e claude.HookInput) (claude.HookOutput, error) {
+                fmt.Printf("Bash output: %s\n", e.ToolOutput)
+                return claude.HookOutput{}, nil
+            },
+        },
+    },
+})
+```
+
+### Hook Events
+
+| Event           | When                         | HookInput fields set                    |
+|-----------------|------------------------------|-----------------------------------------|
+| `HookMessage`   | Every message                | Event, SessionID, Message               |
+| `HookPreToolUse`| Before tool execution        | + ToolName, ToolInput                   |
+| `HookPostToolUse`| After tool execution        | + ToolName, ToolOutput                  |
+| `HookResult`    | Final result received        | Event, SessionID, Message               |
+
+## MCP Server Integration
+
+Connect external MCP tool servers to give Claude access to custom tools:
+
+```go
+client := claude.NewClient(claude.Options{
+    MCPServers: []claude.MCPServerConfig{
+        {
+            Name:    "filesystem",
+            Command: "npx",
+            Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
+        },
+    },
+})
+```
+
+The SDK writes a temporary MCP config file and passes it to the CLI via `--mcp-config`. Cleanup is automatic.
+
+## API Reference
+
+### Options
 
 | Field                | Type                | Description                                      |
 |----------------------|---------------------|--------------------------------------------------|
-| `Model`              | `string`            | Model name (e.g. `"opus-4-6"`, `"sonnet-4-6"`)  |
+| `Model`              | `string`            | Model name or constant (`ModelOpus`, `ModelSonnet`, `ModelHaiku`) |
 | `SystemPrompt`       | `string`            | Override the default system prompt                |
 | `AppendSystemPrompt` | `string`            | Append to the default system prompt               |
 | `AllowedTools`       | `[]string`          | Tool allowlist                                    |
@@ -76,10 +146,11 @@ Sends a one-shot prompt to the Claude CLI and returns a channel that streams `Me
 | `MaxThinkingTokens`  | `int`               | Extended thinking token budget                    |
 | `MaxTurns`           | `int`               | Max agent loop turns                              |
 | `WorkingDirectory`   | `string`            | Working directory for the CLI subprocess          |
-| `PermissionMode`     | `string`            | `"default"`, `"acceptEdits"`, `"bypassPermissions"` |
+| `PermissionMode`     | `string`            | `PermissionDefault`, `PermissionAcceptEdits`, `PermissionBypassPermissions` |
 | `CLIPath`            | `string`            | Path to the `claude` binary (default: from PATH)  |
 | `Env`                | `map[string]string` | Extra environment variables for the CLI process   |
 | `MCPServers`         | `[]MCPServerConfig` | External MCP servers to connect to                |
+| `MCPConfigPath`      | `string`            | Path to pre-existing MCP config (takes precedence over MCPServers) |
 
 ### Message Types
 
@@ -100,54 +171,49 @@ Sends a one-shot prompt to the Claude CLI and returns a channel that streams `Me
 | `ToolResultBlock` | Tool execution result     |
 | `ThinkingBlock`   | Extended thinking content |
 
-### MCP Server Configuration
+### Error Types
 
-Connect external MCP tool servers to give Claude access to custom tools:
-
-```go
-client := claude.NewClient(claude.Options{
-    MCPServers: []claude.MCPServerConfig{
-        {
-            Name:    "filesystem",
-            Command: "npx",
-            Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
-        },
-    },
-})
-```
-
-The SDK writes a temporary MCP config file and passes it to the CLI via `--mcp-config`.
-
-| Field     | Type                | Description                              |
-|-----------|---------------------|------------------------------------------|
-| `Name`    | `string`            | Server identifier                        |
-| `Command` | `string`            | Executable to run                        |
-| `Args`    | `[]string`          | Command-line arguments                   |
-| `Env`     | `map[string]string` | Environment variables for the server     |
-| `CWD`     | `string`            | Working directory for the server process |
+| Type            | Description                  | Helper          |
+|-----------------|------------------------------|-----------------|
+| `CLIError`      | CLI returned an error        | `IsCLIError()`  |
+| `ProtocolError` | JSON parsing failure         | `IsProtocolError()` |
+| `ProcessError`  | Subprocess exited abnormally | `IsProcessError()`, `ExitCode()` |
 
 ## Architecture
-
-This SDK follows the same architecture as Anthropic's official TypeScript and Python Agent SDKs:
-
-1. Spawns the `claude` CLI binary as a subprocess
-2. Uses `--output-format stream-json` for structured streaming output
-3. Parses JSON lines from stdout into typed Go structs
-4. Delivers messages over a Go channel for idiomatic consumption
 
 ```
 Your Go app  -->  claude-agent-sdk-go  -->  claude CLI  -->  Anthropic API
                   (this library)            (subprocess)
 ```
 
+1. Spawns the `claude` CLI binary as a subprocess
+2. Uses `--output-format stream-json` for structured streaming output
+3. Parses JSON lines from stdout into typed Go structs
+4. Delivers messages over a Go channel for idiomatic consumption
+
 ## Forward Compatibility
 
-The SDK is designed for forward compatibility with future CLI versions:
-
-- **Unknown message types** are returned as `*UnknownMessage` with the raw JSON preserved, never as errors.
-- **Unknown content block types** within messages are silently skipped.
+- **Unknown message types** are returned as `*UnknownMessage` with the raw JSON preserved
+- **Unknown content block types** within messages are silently skipped
 
 This ensures your application won't break when the CLI adds new message or content types.
+
+## Development
+
+```bash
+# Run all checks
+just check
+
+# Individual commands
+just fmt        # format code
+just lint       # run go vet
+just test       # run tests with race detector
+just build      # build all packages
+```
+
+## Zero Dependencies
+
+This SDK has no external dependencies -- only the Go standard library.
 
 ## License
 

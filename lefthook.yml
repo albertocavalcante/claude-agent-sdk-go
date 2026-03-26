@@ -1,0 +1,19 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt-check:
+      glob: "*.go"
+      run: gofmt -l . | grep -q . && echo "Run gofmt" && exit 1 || true
+    vet:
+      glob: "*.go"
+      run: go vet ./...
+
+commit-msg:
+  commands:
+    conventional:
+      run: |
+        msg=$(head -1 {1})
+        if ! echo "$msg" | grep -qE '^(feat|fix|docs|chore|refactor|test|ci|perf|style|build)(\(.+\))?: .+'; then
+          echo "Commit message must follow Conventional Commits: type(scope): description"
+          exit 1
+        fi

@@ -1,6 +1,9 @@
 package claude
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestMessageTypeInterface(t *testing.T) {
 	// Verify all message types implement the Message interface.
@@ -98,6 +101,87 @@ func TestErrorTypes(t *testing.T) {
 		e := &ProcessError{Message: "exited", ExitCode: 1}
 		if e.Error() == "" {
 			t.Error("expected non-empty error string")
+		}
+	})
+}
+
+func TestErrorHelpers(t *testing.T) {
+	t.Run("IsProcessError", func(t *testing.T) {
+		err := &ProcessError{Message: "exit", ExitCode: 1}
+		if !IsProcessError(err) {
+			t.Error("expected IsProcessError to return true")
+		}
+		if IsProcessError(fmt.Errorf("not a process error")) {
+			t.Error("expected IsProcessError to return false for non-ProcessError")
+		}
+	})
+
+	t.Run("IsCLIError", func(t *testing.T) {
+		err := &CLIError{Message: "fail"}
+		if !IsCLIError(err) {
+			t.Error("expected IsCLIError to return true")
+		}
+	})
+
+	t.Run("IsProtocolError", func(t *testing.T) {
+		err := &ProtocolError{Message: "bad json"}
+		if !IsProtocolError(err) {
+			t.Error("expected IsProtocolError to return true")
+		}
+	})
+
+	t.Run("ExitCode", func(t *testing.T) {
+		err := &ProcessError{Message: "exit", ExitCode: 42}
+		if got := ExitCode(err); got != 42 {
+			t.Errorf("ExitCode() = %d, want 42", got)
+		}
+		if got := ExitCode(fmt.Errorf("other")); got != -1 {
+			t.Errorf("ExitCode(other) = %d, want -1", got)
+		}
+	})
+}
+
+func TestModelConstants(t *testing.T) {
+	if ModelOpus == "" {
+		t.Error("ModelOpus should not be empty")
+	}
+	if ModelSonnet == "" {
+		t.Error("ModelSonnet should not be empty")
+	}
+	if ModelHaiku == "" {
+		t.Error("ModelHaiku should not be empty")
+	}
+}
+
+func TestPermissionModeConstants(t *testing.T) {
+	if PermissionDefault != "default" {
+		t.Errorf("PermissionDefault = %q, want 'default'", PermissionDefault)
+	}
+	if PermissionAcceptEdits != "acceptEdits" {
+		t.Errorf("PermissionAcceptEdits = %q, want 'acceptEdits'", PermissionAcceptEdits)
+	}
+	if PermissionBypassPermissions != "bypassPermissions" {
+		t.Errorf("PermissionBypassPermissions = %q, want 'bypassPermissions'", PermissionBypassPermissions)
+	}
+}
+
+func TestValidateHooks(t *testing.T) {
+	t.Run("valid hooks", func(t *testing.T) {
+		hooks := []HookRegistration{
+			{Event: HookPreToolUse, ToolPattern: "^Bash$"},
+			{Event: HookPostToolUse, ToolPattern: ""},
+		}
+		if err := ValidateHooks(hooks); err != nil {
+			t.Errorf("expected no error, got: %v", err)
+		}
+	})
+
+	t.Run("invalid pattern", func(t *testing.T) {
+		hooks := []HookRegistration{
+			{Event: HookPreToolUse, ToolPattern: "[invalid"},
+		}
+		if err := ValidateHooks(hooks); err == nil {
+			t.Error("expected error for invalid regex pattern")
 		}
 	})
 }

@@ -180,8 +180,11 @@ func TestMCPConfigPathPrecedence(t *testing.T) {
 		},
 	}
 
-	tOpts, cleanup := toTransportOptions(&opts)
+	tOpts, cleanup, err := toTransportOptions(&opts)
 	defer cleanup()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	if tOpts.MCPConfigPath != "/tmp/my-existing-config.json" {
 		t.Errorf("expected MCPConfigPath '/tmp/my-existing-config.json', got %q", tOpts.MCPConfigPath)

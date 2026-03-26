@@ -18,9 +18,10 @@ import (
 type ClaudeClient struct {
 	opts      Options
 	sessionID string
-	mu        sync.Mutex
+	mu        sync.RWMutex
 	hooks     []HookRegistration
 	transport transport.Transport
+	closed    bool
 }
 
 // NewClient creates a new ClaudeClient with the given options.
@@ -28,8 +29,8 @@ type ClaudeClient struct {
 // or use Options.SessionID if provided.
 func NewClient(opts Options) *ClaudeClient {
 	return &ClaudeClient{
-		opts:  opts,
-		hooks: opts.Hooks,
+		opts:      opts,
+		hooks:     opts.Hooks,
 		sessionID: opts.SessionID,
 	}
 }
@@ -46,9 +47,18 @@ func newClientWithTransport(opts Options, t transport.Transport) *ClaudeClient {
 // SessionID returns the current session ID.
 // It is safe to call concurrently while a Query is running.
 func (c *ClaudeClient) SessionID() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionID
+}
+
+// Close releases any resources held by the client.
+// After Close, the client should not be used.
+func (c *ClaudeClient) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.sessionID
+	c.closed = true
+	return nil
 }
 
 // Query sends a prompt and returns a channel of messages.
@@ -62,14 +72,19 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 	go func() {
 		defer close(ch)
 
-		// Ensure we have a session ID.
+		// Snapshot session state under lock.
 		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			ch <- MessageOrError{Err: fmt.Errorf("client is closed")}
+			return
+		}
 		if c.sessionID == "" {
 			c.sessionID = generateSessionID()
 		}
 		sessionID := c.sessionID
 
-		// Build options with the session ID.
+		// Copy options with the session ID.
 		opts := c.opts
 		opts.SessionID = sessionID
 		c.mu.Unlock()
@@ -98,14 +113,10 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 				continue
 			}
 
-			// Capture session ID from the first ResultMessage if we generated one.
+			// Capture session ID from the ResultMessage.
 			if rm, ok := moe.Message.(*ResultMessage); ok && rm.SessionID != "" {
 				c.mu.Lock()
-				if c.sessionID == sessionID {
-					// Only update if we still have the session ID we started with.
-					// This captures the real session ID from the CLI.
-					c.sessionID = rm.SessionID
-				}
+				c.sessionID = rm.SessionID
 				c.mu.Unlock()
 			}
 

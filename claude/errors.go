@@ -1,6 +1,9 @@
 package claude
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // CLIError indicates the Claude CLI returned an error message.
 type CLIError struct {
@@ -36,4 +39,32 @@ type ProcessError struct {
 
 func (e *ProcessError) Error() string {
 	return fmt.Sprintf("process error (exit %d): %s", e.ExitCode, e.Message)
+}
+
+// IsProcessError checks if the error is a ProcessError.
+func IsProcessError(err error) bool {
+	var pe *ProcessError
+	return errors.As(err, &pe)
+}
+
+// IsCLIError checks if the error is a CLIError.
+func IsCLIError(err error) bool {
+	var ce *CLIError
+	return errors.As(err, &ce)
+}
+
+// IsProtocolError checks if the error is a ProtocolError.
+func IsProtocolError(err error) bool {
+	var pe *ProtocolError
+	return errors.As(err, &pe)
+}
+
+// ExitCode extracts the exit code from a ProcessError in the error chain.
+// Returns -1 if the error is not a ProcessError.
+func ExitCode(err error) int {
+	var pe *ProcessError
+	if errors.As(err, &pe) {
+		return pe.ExitCode
+	}
+	return -1
 }

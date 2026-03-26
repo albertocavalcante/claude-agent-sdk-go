@@ -17,6 +17,7 @@ package claude
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/internal/transport"
 )
@@ -46,8 +47,12 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 	go func() {
 		defer close(ch)
 
-		tOpts, cleanup := toTransportOptions(&opts)
+		tOpts, cleanup, cfgErr := toTransportOptions(&opts)
 		defer cleanup()
+		if cfgErr != nil {
+			ch <- MessageOrError{Err: fmt.Errorf("config error: %w", cfgErr)}
+			return
+		}
 
 		if err := t.Start(ctx, prompt, tOpts); err != nil {
 			ch <- MessageOrError{Err: err}
@@ -87,13 +92,13 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 }
 
 // toTransportOptions converts public Options to the internal transport Options.
-// It returns the options and a cleanup function that removes any auto-generated
-// MCP config files. The cleanup function is always non-nil and safe to call.
-func toTransportOptions(opts *Options) (*transport.Options, func()) {
+// It returns the options, a cleanup function, and any error from MCP config setup.
+// The cleanup function is always non-nil and safe to call.
+func toTransportOptions(opts *Options) (*transport.Options, func(), error) {
 	noop := func() {}
 
 	if opts == nil {
-		return nil, noop
+		return nil, noop, nil
 	}
 	tOpts := &transport.Options{
 		Model:              opts.Model,
@@ -113,18 +118,18 @@ func toTransportOptions(opts *Options) (*transport.Options, func()) {
 	// MCPConfigPath takes precedence over MCPServers.
 	if opts.MCPConfigPath != "" {
 		tOpts.MCPConfigPath = opts.MCPConfigPath
-		return tOpts, noop // caller manages the file lifecycle
+		return tOpts, noop, nil // caller manages the file lifecycle
 	}
 
 	// Write MCP config if servers are configured.
 	if len(opts.MCPServers) > 0 {
 		configPath, err := WriteMCPConfig(opts.MCPServers)
-		if err == nil {
-			tOpts.MCPConfigPath = configPath
-			return tOpts, func() { _ = CleanupMCPConfig(configPath) }
+		if err != nil {
+			return nil, noop, fmt.Errorf("writing MCP config: %w", err)
 		}
-		// If WriteMCPConfig fails, we silently skip MCP config.
+		tOpts.MCPConfigPath = configPath
+		return tOpts, func() { _ = CleanupMCPConfig(configPath) }, nil
 	}
 
-	return tOpts, noop
+	return tOpts, noop, nil
 }

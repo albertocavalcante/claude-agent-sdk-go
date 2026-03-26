@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"regexp"
 )
 
@@ -77,17 +78,55 @@ type HookOutput struct {
 	Reason string
 }
 
+// compiledHook is an internal representation of a HookRegistration with
+// a pre-compiled regex pattern for efficient matching.
+type compiledHook struct {
+	event    HookEvent
+	pattern  *regexp.Regexp // nil means match all
+	callback HookCallback
+}
+
+// ValidateHooks checks that all hook registrations have valid tool patterns.
+// Returns an error if any pattern fails to compile as a regex.
+func ValidateHooks(hooks []HookRegistration) error {
+	for i, h := range hooks {
+		if h.ToolPattern != "" {
+			if _, err := regexp.Compile(h.ToolPattern); err != nil {
+				return fmt.Errorf("hook %d: invalid tool pattern %q: %w", i, h.ToolPattern, err)
+			}
+		}
+	}
+	return nil
+}
+
 // hookRunner manages hook execution and tracks tool_use_id to tool name
 // mappings for PostToolUse pattern matching.
 type hookRunner struct {
-	hooks    []HookRegistration
-	toolMap  map[string]string // tool_use_id -> tool name
+	hooks   []compiledHook
+	toolMap map[string]string // tool_use_id -> tool name
 }
 
 // newHookRunner creates a new hookRunner with the given hooks.
+// Patterns are compiled once here for efficient matching.
 func newHookRunner(hooks []HookRegistration) *hookRunner {
+	compiled := make([]compiledHook, 0, len(hooks))
+	for _, h := range hooks {
+		ch := compiledHook{
+			event:    h.Event,
+			callback: h.Callback,
+		}
+		if h.ToolPattern != "" {
+			// Pattern was already validated by ValidateHooks or NewClient.
+			// Best-effort compile; skip hook if pattern is somehow invalid.
+			re, err := regexp.Compile(h.ToolPattern)
+			if err == nil {
+				ch.pattern = re
+			}
+		}
+		compiled = append(compiled, ch)
+	}
 	return &hookRunner{
-		hooks:   hooks,
+		hooks:   compiled,
 		toolMap: make(map[string]string),
 	}
 }
@@ -98,13 +137,13 @@ func newHookRunner(hooks []HookRegistration) *hookRunner {
 func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Message) {
 	// Fire HookMessage for every message.
 	for i := range hr.hooks {
-		if hr.hooks[i].Event == HookMessage && hr.hooks[i].Callback != nil {
+		if hr.hooks[i].event == HookMessage && hr.hooks[i].callback != nil {
 			input := HookInput{
 				Event:     HookMessage,
 				SessionID: sessionID,
 				Message:   msg,
 			}
-			_, _ = hr.hooks[i].Callback(ctx, input)
+			_, _ = hr.hooks[i].callback(ctx, input)
 		}
 	}
 
@@ -120,10 +159,10 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 			hr.toolMap[tu.ID] = tu.Name
 
 			for i := range hr.hooks {
-				if hr.hooks[i].Event != HookPreToolUse || hr.hooks[i].Callback == nil {
+				if hr.hooks[i].event != HookPreToolUse || hr.hooks[i].callback == nil {
 					continue
 				}
-				if !matchToolPattern(hr.hooks[i].ToolPattern, tu.Name) {
+				if !hr.matchToolPattern(i, tu.Name) {
 					continue
 				}
 				input := HookInput{
@@ -133,7 +172,7 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 					ToolName:  tu.Name,
 					ToolInput: tu.Input,
 				}
-				_, _ = hr.hooks[i].Callback(ctx, input)
+				_, _ = hr.hooks[i].callback(ctx, input)
 			}
 		}
 
@@ -148,10 +187,10 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 			toolName := hr.toolMap[tr.ToolUseID]
 
 			for i := range hr.hooks {
-				if hr.hooks[i].Event != HookPostToolUse || hr.hooks[i].Callback == nil {
+				if hr.hooks[i].event != HookPostToolUse || hr.hooks[i].callback == nil {
 					continue
 				}
-				if !matchToolPattern(hr.hooks[i].ToolPattern, toolName) {
+				if !hr.matchToolPattern(i, toolName) {
 					continue
 				}
 				input := HookInput{
@@ -161,36 +200,30 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 					ToolName:   toolName,
 					ToolOutput: tr.Content,
 				}
-				_, _ = hr.hooks[i].Callback(ctx, input)
+				_, _ = hr.hooks[i].callback(ctx, input)
 			}
 		}
 
 	case *ResultMessage:
 		// Fire HookResult for ResultMessage.
 		for i := range hr.hooks {
-			if hr.hooks[i].Event == HookResult && hr.hooks[i].Callback != nil {
+			if hr.hooks[i].event == HookResult && hr.hooks[i].callback != nil {
 				input := HookInput{
 					Event:     HookResult,
 					SessionID: sessionID,
 					Message:   msg,
 				}
-				_, _ = hr.hooks[i].Callback(ctx, input)
+				_, _ = hr.hooks[i].callback(ctx, input)
 			}
 		}
 	}
 }
 
-// matchToolPattern checks if a tool name matches the given regex pattern.
-// If the pattern is empty, it matches all tools.
-// If the pattern is invalid, it does not match.
-func matchToolPattern(pattern, toolName string) bool {
-	if pattern == "" {
+// matchToolPattern checks if a tool name matches the compiled pattern at index i.
+// A nil pattern matches all tools.
+func (hr *hookRunner) matchToolPattern(i int, toolName string) bool {
+	if hr.hooks[i].pattern == nil {
 		return true
 	}
-	re, err := regexp.Compile(pattern)
-	if err != nil {
-		// Invalid pattern silently does not match.
-		return false
-	}
-	return re.MatchString(toolName)
+	return hr.hooks[i].pattern.MatchString(toolName)
 }

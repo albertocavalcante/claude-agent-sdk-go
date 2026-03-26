@@ -1,0 +1,16 @@
+[linters]
+enable = [
+  "errcheck",
+  "govet",
+  "staticcheck",
+  "unused",
+  "ineffassign",
+  "gocritic",
+  "misspell",
+  "unconvert",
+  "unparam",
+  "whitespace",
+]
+
+[formatters]
+enable = ["gofmt", "goimports"]

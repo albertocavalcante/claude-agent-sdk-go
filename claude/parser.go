@@ -45,7 +45,7 @@ func ParseMessage(data []byte) (Message, error) {
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return nil, &ProtocolError{
 			Message: "failed to parse JSON line: " + err.Error(),
-			Raw:     data,
+			Raw:     cloneBytes(data),
 		}
 	}
 
@@ -59,11 +59,9 @@ func ParseMessage(data []byte) (Message, error) {
 	case "system":
 		return parseSystemMessage(data)
 	default:
-		raw := make(json.RawMessage, len(data))
-		copy(raw, data)
 		return &UnknownMessage{
 			RawType: envelope.Type,
-			Raw:     raw,
+			Raw:     json.RawMessage(cloneBytes(data)),
 		}, nil
 	}
 }
@@ -73,7 +71,7 @@ func parseAssistantMessage(data []byte) (*AssistantMessage, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, &ProtocolError{
 			Message: "failed to parse assistant message: " + err.Error(),
-			Raw:     data,
+			Raw:     cloneBytes(data),
 		}
 	}
 
@@ -97,7 +95,7 @@ func parseUserMessage(data []byte) (*UserMessage, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, &ProtocolError{
 			Message: "failed to parse user message: " + err.Error(),
-			Raw:     data,
+			Raw:     cloneBytes(data),
 		}
 	}
 
@@ -118,7 +116,7 @@ func parseResultMessage(data []byte) (*ResultMessage, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, &ProtocolError{
 			Message: "failed to parse result message: " + err.Error(),
-			Raw:     data,
+			Raw:     cloneBytes(data),
 		}
 	}
 
@@ -138,15 +136,22 @@ func parseSystemMessage(data []byte) (*SystemMessage, error) {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return nil, &ProtocolError{
 			Message: "failed to parse system message: " + err.Error(),
-			Raw:     data,
+			Raw:     cloneBytes(data),
 		}
 	}
 
-	rawCopy := make(json.RawMessage, len(data))
-	copy(rawCopy, data)
-
 	return &SystemMessage{
 		Subtype: raw.Subtype,
-		Raw:     rawCopy,
+		Raw:     json.RawMessage(cloneBytes(data)),
 	}, nil
+}
+
+// cloneBytes returns a copy of the byte slice.
+func cloneBytes(b []byte) []byte {
+	if b == nil {
+		return nil
+	}
+	c := make([]byte, len(b))
+	copy(c, b)
+	return c
 }
