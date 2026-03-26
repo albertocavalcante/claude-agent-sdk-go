@@ -111,6 +111,7 @@ func toTransportOptions(opts *Options) (*transport.Options, func(), error) {
 		WorkingDirectory:   opts.WorkingDirectory,
 		PermissionMode:     opts.PermissionMode,
 		CLIPath:            opts.CLIPath,
+		CLIPrefixArgs:      opts.CLIPrefixArgs,
 		Env:                opts.Env,
 		SessionID:          opts.SessionID,
 	}

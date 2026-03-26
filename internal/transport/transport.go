@@ -21,6 +21,7 @@ type Options struct {
 	WorkingDirectory   string
 	PermissionMode     string
 	CLIPath            string
+	CLIPrefixArgs      []string
 	Env                map[string]string
 	SessionID          string
 	MCPConfigPath      string

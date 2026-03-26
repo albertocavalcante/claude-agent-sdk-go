@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strconv"
 	"sync"
+	"syscall"
+	"time"
 )
 
 // SubprocessTransport spawns the claude CLI as a subprocess and streams
@@ -28,6 +30,11 @@ func (t *SubprocessTransport) Start(ctx context.Context, prompt string, opts *Op
 	}
 
 	args := buildArgs(prompt, opts)
+
+	// Support package runners (npx, bunx) via CLIPrefixArgs.
+	if opts != nil && len(opts.CLIPrefixArgs) > 0 {
+		args = append(opts.CLIPrefixArgs, args...)
+	}
 
 	t.cmd = exec.CommandContext(ctx, cliPath, args...)
 
@@ -109,8 +116,26 @@ func (t *SubprocessTransport) Close() error {
 	defer t.mu.Unlock()
 
 	if t.cmd != nil && t.cmd.Process != nil {
-		// Kill the process; ignore error if already exited.
-		_ = t.cmd.Process.Kill()
+		// Try graceful SIGTERM first, fall back to SIGKILL after timeout.
+		_ = t.cmd.Process.Signal(syscall.SIGTERM)
+
+		// Give the process a short window to exit gracefully.
+		done := make(chan struct{})
+		go func() {
+			if t.done != nil {
+				<-t.done
+			}
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			// Process exited gracefully.
+			return nil
+		case <-time.After(3 * time.Second):
+			// Force kill after timeout.
+			_ = t.cmd.Process.Kill()
+		}
 	}
 
 	// Wait for the reader goroutine to finish.

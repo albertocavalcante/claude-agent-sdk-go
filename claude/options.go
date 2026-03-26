@@ -34,6 +34,11 @@ type Options struct {
 	// If empty, "claude" is resolved from PATH.
 	CLIPath string
 
+	// CLIPrefixArgs are arguments inserted between CLIPath and the SDK-generated flags.
+	// This is useful for invoking the CLI via a package runner like npx:
+	//   CLIPath: "npx", CLIPrefixArgs: []string{"--yes", "@anthropic-ai/claude-code"}
+	CLIPrefixArgs []string
+
 	// Env provides additional environment variables for the CLI subprocess.
 	Env map[string]string
 
