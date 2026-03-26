@@ -218,3 +218,7 @@ This SDK has no external dependencies -- only the Go standard library.
 ## License
 
 [MIT](LICENSE)
+
+## Trademarks
+
+Claude and Claude Code are trademarks of [Anthropic, PBC](https://www.anthropic.com). This project is not affiliated with or endorsed by Anthropic.
