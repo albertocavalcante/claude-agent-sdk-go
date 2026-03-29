@@ -14,21 +14,53 @@ type MockTransport struct {
 	// StartErr, if non-nil, is returned by Start instead of replaying lines.
 	StartErr error
 
-	ch chan RawLineOrError
+	// StartFunc, if non-nil, is called at the beginning of Start.
+	StartFunc func()
+
+	// CloseFunc, if non-nil, is called at the beginning of Close.
+	CloseFunc func()
+
+	// SlowMode, when true, makes Start succeed but defers sending lines
+	// until Close is called. This simulates a long-running query that
+	// blocks until cancelled.
+	SlowMode bool
+
+	ch      chan RawLineOrError
+	closeCh chan struct{} // signals Close was called in slow mode
 }
 
 // Start sends the canned lines to the channel.
-func (m *MockTransport) Start(_ context.Context, _ string, _ *Options) error {
+func (m *MockTransport) Start(ctx context.Context, _ string, _ *Options) error {
+	if m.StartFunc != nil {
+		m.StartFunc()
+	}
 	if m.StartErr != nil {
 		return m.StartErr
 	}
 
 	m.ch = make(chan RawLineOrError, len(m.RawLines)+1)
 
+	if m.SlowMode {
+		m.closeCh = make(chan struct{})
+		go func() {
+			defer close(m.ch)
+			// Block until Close is called or context cancelled.
+			select {
+			case <-m.closeCh:
+			case <-ctx.Done():
+			}
+		}()
+		return nil
+	}
+
 	go func() {
 		defer close(m.ch)
 		for _, line := range m.RawLines {
-			m.ch <- RawLineOrError{Line: []byte(line)}
+			select {
+			case m.ch <- RawLineOrError{Line: []byte(line)}:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 
@@ -40,7 +72,17 @@ func (m *MockTransport) Lines() <-chan RawLineOrError {
 	return m.ch
 }
 
-// Close is a no-op for MockTransport.
+// Close calls CloseFunc if set and signals slow mode to stop.
 func (m *MockTransport) Close() error {
+	if m.CloseFunc != nil {
+		m.CloseFunc()
+	}
+	if m.closeCh != nil {
+		select {
+		case <-m.closeCh:
+		default:
+			close(m.closeCh)
+		}
+	}
 	return nil
 }

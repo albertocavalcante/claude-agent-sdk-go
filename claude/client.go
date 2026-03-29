@@ -13,8 +13,10 @@ import (
 // Unlike Query() which spawns one subprocess per call, ClaudeClient
 // maintains a session across multiple Query calls using --session-id.
 //
-// ClaudeClient is safe for concurrent reads of SessionID while a Query
-// is running, but only one Query should be active at a time.
+// When a new Query arrives while one is already in-flight, the client
+// cancels the in-flight query and starts the new one immediately
+// (cancel-and-replace). This prevents "session already in use" errors
+// and provides snappy UX when users send messages rapidly.
 type ClaudeClient struct {
 	opts      Options
 	sessionID string
@@ -22,6 +24,10 @@ type ClaudeClient struct {
 	hooks     []HookRegistration
 	transport transport.Transport
 	closed    bool
+
+	// Active query tracking for cancel-and-replace.
+	activeCancel context.CancelFunc // cancels the in-flight query
+	activeDone   chan struct{}      // closed when the in-flight query goroutine exits
 }
 
 // NewClient creates a new ClaudeClient with the given options.
@@ -53,17 +59,31 @@ func (c *ClaudeClient) SessionID() string {
 }
 
 // Close releases any resources held by the client.
+// It cancels any in-flight query and waits for it to finish.
 // After Close, the client should not be used.
 func (c *ClaudeClient) Close() error {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.closed = true
+	cancel := c.activeCancel
+	done := c.activeDone
+	c.mu.Unlock()
+
+	// Cancel in-flight query and wait for cleanup.
+	if cancel != nil {
+		cancel()
+	}
+	if done != nil {
+		<-done
+	}
 	return nil
 }
 
 // Query sends a prompt and returns a channel of messages.
 // Each call resumes the same session (via --session-id).
 // The channel is closed when the conversation ends or the context is cancelled.
+//
+// If a previous query is still in-flight, it is cancelled before the new
+// one starts. This ensures only one subprocess uses the session at a time.
 //
 // Hook callbacks registered in the Options are fired for each message.
 func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageOrError {
@@ -72,13 +92,39 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 	go func() {
 		defer close(ch)
 
-		// Snapshot session state under lock.
+		// Cancel any in-flight query and wait for it to finish.
 		c.mu.Lock()
 		if c.closed {
 			c.mu.Unlock()
 			ch <- MessageOrError{Err: fmt.Errorf("client is closed")}
 			return
 		}
+		prevCancel := c.activeCancel
+		prevDone := c.activeDone
+		c.mu.Unlock()
+
+		if prevCancel != nil {
+			prevCancel()
+		}
+		if prevDone != nil {
+			<-prevDone // wait for previous goroutine to exit
+		}
+
+		// Create a cancellable context for this query.
+		queryCtx, queryCancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+
+		// Register as the active query.
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			queryCancel()
+			ch <- MessageOrError{Err: fmt.Errorf("client is closed")}
+			return
+		}
+		c.activeCancel = queryCancel
+		c.activeDone = done
+
 		if c.sessionID == "" {
 			c.sessionID = generateSessionID()
 		}
@@ -87,7 +133,6 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 		// Copy options with the session ID.
 		opts := c.opts
 		opts.SessionID = sessionID
-		c.mu.Unlock()
 
 		// Select transport: use injected transport for tests, otherwise subprocess.
 		var t transport.Transport
@@ -96,18 +141,29 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 		} else {
 			t = &transport.SubprocessTransport{}
 		}
+		c.mu.Unlock()
+
+		// Signal completion when this goroutine exits.
+		defer func() {
+			queryCancel()
+			close(done)
+		}()
 
 		// Use queryWithTransport to get raw messages.
-		rawCh := queryWithTransport(ctx, prompt, opts, t)
+		rawCh := queryWithTransport(queryCtx, prompt, opts, t)
 
 		// Create a hook runner to track tool mappings across this query.
 		runner := newHookRunner(c.hooks)
 
 		for moe := range rawCh {
 			if moe.Err != nil {
+				// Don't forward errors from cancelled queries.
+				if queryCtx.Err() != nil {
+					return
+				}
 				select {
 				case ch <- moe:
-				case <-ctx.Done():
+				case <-queryCtx.Done():
 					return
 				}
 				continue
@@ -122,12 +178,12 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 
 			// Fire hooks.
 			currentSessionID := c.SessionID()
-			runner.fireHooks(ctx, currentSessionID, moe.Message)
+			runner.fireHooks(queryCtx, currentSessionID, moe.Message)
 
 			// Forward message to caller.
 			select {
 			case ch <- moe:
-			case <-ctx.Done():
+			case <-queryCtx.Done():
 				return
 			}
 		}

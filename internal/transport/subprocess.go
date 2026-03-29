@@ -29,6 +29,12 @@ func (t *SubprocessTransport) Start(ctx context.Context, prompt string, opts *Op
 		cliPath = opts.CLIPath
 	}
 
+	// Cache the resolved binary path to avoid repeated PATH lookups.
+	resolved, err := LookPath(cliPath)
+	if err != nil {
+		return fmt.Errorf("cannot find %s: %w", cliPath, err)
+	}
+
 	args := buildArgs(prompt, opts)
 
 	// Support package runners (npx, bunx) via CLIPrefixArgs.
@@ -36,7 +42,7 @@ func (t *SubprocessTransport) Start(ctx context.Context, prompt string, opts *Op
 		args = append(opts.CLIPrefixArgs, args...)
 	}
 
-	t.cmd = exec.CommandContext(ctx, cliPath, args...)
+	t.cmd = exec.CommandContext(ctx, resolved, args...)
 
 	if opts != nil && opts.WorkingDirectory != "" {
 		t.cmd.Dir = opts.WorkingDirectory

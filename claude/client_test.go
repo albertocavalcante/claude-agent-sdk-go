@@ -851,6 +851,74 @@ func TestHookRunnerMatchToolPattern(t *testing.T) {
 	}
 }
 
+func TestClientCancelAndReplace(t *testing.T) {
+	// Verifies that a new Query cancels the previous in-flight query,
+	// preventing "session already in use" errors from the CLI.
+
+	// First query: slow mock that blocks until context is cancelled.
+	slowMock := &transport.MockTransport{
+		SlowMode: true, // Start succeeds but Lines() blocks until Close
+		RawLines: []json.RawMessage{
+			json.RawMessage(`{"type":"result","is_error":false,"session_id":"sess_slow"}`),
+		},
+	}
+
+	client := newClientWithTransport(Options{}, slowMock)
+	ctx := context.Background()
+
+	// Start first query (will block on slow mock).
+	q1Ch := client.Query(ctx, "first")
+
+	// Give the goroutine time to start and register as active.
+	// Drain any immediate messages.
+	var q1Done bool
+	select {
+	case _, ok := <-q1Ch:
+		if !ok {
+			q1Done = true
+		}
+	default:
+	}
+
+	if q1Done {
+		t.Fatal("expected first query to still be running")
+	}
+
+	// Start second query — should cancel the first.
+	fastMock := &transport.MockTransport{
+		RawLines: []json.RawMessage{
+			json.RawMessage(`{"type":"assistant","content":[{"type":"text","text":"fast response"}]}`),
+			json.RawMessage(`{"type":"result","is_error":false,"session_id":"sess_fast"}`),
+		},
+	}
+	client.mu.Lock()
+	client.transport = fastMock
+	client.mu.Unlock()
+
+	var q2Messages []Message
+	for msg := range client.Query(ctx, "second") {
+		if msg.Err != nil {
+			t.Fatalf("second query error: %v", msg.Err)
+		}
+		q2Messages = append(q2Messages, msg.Message)
+	}
+
+	// Second query should complete successfully.
+	if len(q2Messages) != 2 {
+		t.Fatalf("expected 2 messages from second query, got %d", len(q2Messages))
+	}
+
+	// First query's channel should be closed (cancelled).
+	for range q1Ch {
+		// drain remaining
+	}
+
+	// Session ID should be from the second query.
+	if sid := client.SessionID(); sid != "sess_fast" {
+		t.Errorf("expected session ID 'sess_fast', got %q", sid)
+	}
+}
+
 func TestGenerateSessionID(t *testing.T) {
 	id1 := generateSessionID()
 	id2 := generateSessionID()
