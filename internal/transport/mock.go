@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/json"
+	"sync"
 )
 
 // MockTransport replays canned JSON lines for testing.
@@ -27,6 +28,7 @@ type MockTransport struct {
 
 	ch      chan RawLineOrError
 	closeCh chan struct{} // signals Close was called in slow mode
+	closeOnce sync.Once
 }
 
 // Start sends the canned lines to the channel.
@@ -77,12 +79,10 @@ func (m *MockTransport) Close() error {
 	if m.CloseFunc != nil {
 		m.CloseFunc()
 	}
-	if m.closeCh != nil {
-		select {
-		case <-m.closeCh:
-		default:
+	m.closeOnce.Do(func() {
+		if m.closeCh != nil {
 			close(m.closeCh)
 		}
-	}
+	})
 	return nil
 }

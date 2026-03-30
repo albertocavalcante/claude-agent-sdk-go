@@ -13,7 +13,9 @@ var binaryCache sync.Map // map[string]string
 // If the name is already an absolute path, it is returned as-is.
 func LookPath(name string) (string, error) {
 	if v, ok := binaryCache.Load(name); ok {
-		return v.(string), nil
+		if s, isStr := v.(string); isStr {
+			return s, nil
+		}
 	}
 
 	path, err := exec.LookPath(name)

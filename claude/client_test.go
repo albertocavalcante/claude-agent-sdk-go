@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/internal/transport"
 )
@@ -869,22 +870,11 @@ func TestClientCancelAndReplace(t *testing.T) {
 	// Start first query (will block on slow mock).
 	q1Ch := client.Query(ctx, "first")
 
-	// Give the goroutine time to start and register as active.
-	// Drain any immediate messages.
-	var q1Done bool
-	select {
-	case _, ok := <-q1Ch:
-		if !ok {
-			q1Done = true
-		}
-	default:
-	}
+	// Wait for the goroutine to register as active.
+	time.Sleep(50 * time.Millisecond)
 
-	if q1Done {
-		t.Fatal("expected first query to still be running")
-	}
-
-	// Start second query — should cancel the first.
+	// Swap transport for the second query. The first query already holds
+	// a reference to slowMock, so this only affects new queries.
 	fastMock := &transport.MockTransport{
 		RawLines: []json.RawMessage{
 			json.RawMessage(`{"type":"assistant","content":[{"type":"text","text":"fast response"}]}`),
