@@ -40,6 +40,7 @@ func TestContentBlockTypeInterface(t *testing.T) {
 	var _ ContentBlock = &ToolUseBlock{}
 	var _ ContentBlock = &ToolResultBlock{}
 	var _ ContentBlock = &ThinkingBlock{}
+	var _ ContentBlock = &UnknownBlock{}
 
 	tests := []struct {
 		name     string
@@ -50,6 +51,7 @@ func TestContentBlockTypeInterface(t *testing.T) {
 		{"ToolUseBlock", &ToolUseBlock{ID: "1", Name: "test"}, "tool_use"},
 		{"ToolResultBlock", &ToolResultBlock{ToolUseID: "1"}, "tool_result"},
 		{"ThinkingBlock", &ThinkingBlock{Thinking: "hmm"}, "thinking"},
+		{"UnknownBlock", &UnknownBlock{RawType: "future_block"}, "future_block"},
 	}
 
 	for _, tt := range tests {

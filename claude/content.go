@@ -46,6 +46,18 @@ type ThinkingBlock struct {
 // BlockType returns "thinking".
 func (b *ThinkingBlock) BlockType() string { return "thinking" }
 
+// UnknownBlock represents any content block type the SDK does not recognize.
+// It preserves the original JSON in Raw so callers can extract fields the
+// SDK has not modeled yet, ensuring forward compatibility when the CLI
+// introduces new block types.
+type UnknownBlock struct {
+	RawType string          `json:"-"`
+	Raw     json.RawMessage `json:"-"`
+}
+
+// BlockType returns the raw type string from the JSON block.
+func (b *UnknownBlock) BlockType() string { return b.RawType }
+
 // rawContentBlock is used for intermediate JSON unmarshalling of content blocks.
 type rawContentBlock struct {
 	Type      string          `json:"type"`
@@ -60,7 +72,9 @@ type rawContentBlock struct {
 }
 
 // parseContentBlock converts a rawContentBlock into a typed ContentBlock.
-// Unknown block types are silently skipped (returns nil).
+// Unknown block types return nil; the parser-level helper handles
+// forward-compat by routing unknown types to *UnknownBlock via
+// parseContentBlockFromJSON.
 func parseContentBlock(raw rawContentBlock) ContentBlock {
 	switch raw.Type {
 	case "text":
@@ -80,7 +94,23 @@ func parseContentBlock(raw rawContentBlock) ContentBlock {
 	case "thinking":
 		return &ThinkingBlock{Thinking: raw.Thinking}
 	default:
-		// Unknown content block types are silently skipped.
 		return nil
 	}
+}
+
+// parseContentBlockFromJSON parses a single block-as-JSON and returns the
+// typed ContentBlock. Unknown types are returned as *UnknownBlock with the
+// original JSON preserved in Raw. Returns an error only on JSON-malformed
+// input (handled by callers as ProtocolError).
+func parseContentBlockFromJSON(data json.RawMessage) (ContentBlock, error) {
+	var raw rawContentBlock
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return nil, err
+	}
+	if cb := parseContentBlock(raw); cb != nil {
+		return cb, nil
+	}
+	cloned := make(json.RawMessage, len(data))
+	copy(cloned, data)
+	return &UnknownBlock{RawType: raw.Type, Raw: cloned}, nil
 }

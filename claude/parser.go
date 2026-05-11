@@ -11,7 +11,7 @@ type rawEnvelope struct {
 
 // rawAssistantMessage is the JSON shape of an assistant message.
 type rawAssistantMessage struct {
-	Content    []rawContentBlock `json:"content"`
+	Content    []json.RawMessage `json:"content"`
 	Model      string            `json:"model,omitempty"`
 	StopReason string            `json:"stop_reason,omitempty"`
 }
@@ -34,7 +34,7 @@ type rawSystemMessage struct {
 
 // rawUserMessage is the JSON shape of a user message.
 type rawUserMessage struct {
-	Content []rawContentBlock `json:"content"`
+	Content []json.RawMessage `json:"content"`
 }
 
 // ParseMessage parses a single JSON line from the CLI into a typed Message.
@@ -81,10 +81,14 @@ func parseAssistantMessage(data []byte) (*AssistantMessage, error) {
 	}
 
 	for _, block := range raw.Content {
-		cb := parseContentBlock(block)
-		if cb != nil {
-			msg.Content = append(msg.Content, cb)
+		cb, err := parseContentBlockFromJSON(block)
+		if err != nil {
+			return nil, &ProtocolError{
+				Message: "failed to parse content block: " + err.Error(),
+				Raw:     cloneBytes(block),
+			}
 		}
+		msg.Content = append(msg.Content, cb)
 	}
 
 	return msg, nil
@@ -102,10 +106,14 @@ func parseUserMessage(data []byte) (*UserMessage, error) {
 	msg := &UserMessage{}
 
 	for _, block := range raw.Content {
-		cb := parseContentBlock(block)
-		if cb != nil {
-			msg.Content = append(msg.Content, cb)
+		cb, err := parseContentBlockFromJSON(block)
+		if err != nil {
+			return nil, &ProtocolError{
+				Message: "failed to parse content block: " + err.Error(),
+				Raw:     cloneBytes(block),
+			}
 		}
+		msg.Content = append(msg.Content, cb)
 	}
 
 	return msg, nil

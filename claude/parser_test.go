@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"bytes"
 	"testing"
 )
 
@@ -234,18 +235,43 @@ func TestParseUnknownContentBlockType(t *testing.T) {
 	}
 
 	am := msg.(*AssistantMessage)
-	// Unknown block types are silently skipped, so we should have 2 text blocks.
-	if len(am.Content) != 2 {
-		t.Fatalf("expected 2 content blocks (unknown skipped), got %d", len(am.Content))
+	// Unknown block types are preserved as *UnknownBlock for forward-compat.
+	if len(am.Content) != 3 {
+		t.Fatalf("expected 3 content blocks (unknown preserved), got %d", len(am.Content))
 	}
 
-	tb0 := am.Content[0].(*TextBlock)
+	tb0, ok := am.Content[0].(*TextBlock)
+	if !ok {
+		t.Fatalf("expected *TextBlock at [0], got %T", am.Content[0])
+	}
 	if tb0.Text != "Hello" {
 		t.Errorf("expected 'Hello', got %q", tb0.Text)
 	}
-	tb1 := am.Content[1].(*TextBlock)
-	if tb1.Text != "World" {
-		t.Errorf("expected 'World', got %q", tb1.Text)
+
+	ub, ok := am.Content[1].(*UnknownBlock)
+	if !ok {
+		t.Fatalf("expected *UnknownBlock at [1], got %T", am.Content[1])
+	}
+	if ub.RawType != "future_block_type" {
+		t.Errorf("expected RawType 'future_block_type', got %q", ub.RawType)
+	}
+	if ub.BlockType() != "future_block_type" {
+		t.Errorf("expected BlockType 'future_block_type', got %q", ub.BlockType())
+	}
+	if len(ub.Raw) == 0 {
+		t.Error("expected Raw to be non-empty (original JSON preserved)")
+	}
+	// Raw should contain the original block JSON verbatim.
+	if !bytes.Contains(ub.Raw, []byte(`"data"`)) || !bytes.Contains(ub.Raw, []byte(`"something"`)) {
+		t.Errorf("expected Raw to preserve original fields, got: %s", ub.Raw)
+	}
+
+	tb2, ok := am.Content[2].(*TextBlock)
+	if !ok {
+		t.Fatalf("expected *TextBlock at [2], got %T", am.Content[2])
+	}
+	if tb2.Text != "World" {
+		t.Errorf("expected 'World', got %q", tb2.Text)
 	}
 }
 
