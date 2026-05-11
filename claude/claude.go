@@ -34,6 +34,22 @@ type MessageOrError struct {
 //
 // Each value on the channel is either a Message or an error. Callers should
 // check MessageOrError.Err before accessing MessageOrError.Message.
+//
+// # Backpressure
+//
+// The returned channel is buffered (capacity 10). The producer goroutine
+// blocks when the buffer is full, which in turn pauses reading from the CLI
+// subprocess. Slow consumers therefore apply natural backpressure rather
+// than dropping messages.
+//
+// Callers must drain the channel until it closes, or cancel ctx, to avoid
+// leaking the producer goroutine. A consumer that stops reading without
+// cancelling ctx will leave the goroutine blocked until the subprocess
+// exits on its own.
+//
+// Errors from user-supplied hook callbacks are surfaced on the same channel
+// as *HookError values (see IsHookError) immediately after the message that
+// triggered them. Hook errors do not break the stream.
 func Query(ctx context.Context, prompt string, opts Options) <-chan MessageOrError {
 	t := &transport.SubprocessTransport{}
 	return queryWithTransport(ctx, prompt, opts, t)

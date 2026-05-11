@@ -607,9 +607,14 @@ func TestClientHookErrorDoesNotBreakStream(t *testing.T) {
 
 	ctx := context.Background()
 	var messages []Message
+	var hookErrCount int
 	for msg := range client.Query(ctx, "test") {
 		if msg.Err != nil {
-			t.Fatalf("unexpected error: %v", msg.Err)
+			if IsHookError(msg.Err) {
+				hookErrCount++
+				continue
+			}
+			t.Fatalf("unexpected non-hook error: %v", msg.Err)
 		}
 		messages = append(messages, msg.Message)
 	}
@@ -617,6 +622,10 @@ func TestClientHookErrorDoesNotBreakStream(t *testing.T) {
 	// Messages should still be received despite hook errors.
 	if len(messages) != 2 {
 		t.Fatalf("expected 2 messages despite hook error, got %d", len(messages))
+	}
+	// HookMessage fires for each of the 2 messages and errors each time.
+	if hookErrCount != 2 {
+		t.Errorf("expected 2 HookErrors surfaced, got %d", hookErrCount)
 	}
 
 	mu.Lock()

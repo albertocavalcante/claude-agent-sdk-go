@@ -68,3 +68,28 @@ func ExitCode(err error) int {
 	}
 	return -1
 }
+
+// HookError wraps an error returned by a user-supplied hook callback.
+// It carries enough context to identify which hook fired and on which tool,
+// so callers can route or filter hook failures without parsing strings.
+type HookError struct {
+	Event    HookEvent
+	ToolName string // empty for non-tool events (Message, Result)
+	Err      error
+}
+
+func (e *HookError) Error() string {
+	if e.ToolName != "" {
+		return fmt.Sprintf("hook %s for tool %q failed: %v", e.Event, e.ToolName, e.Err)
+	}
+	return fmt.Sprintf("hook %s failed: %v", e.Event, e.Err)
+}
+
+// Unwrap returns the underlying hook callback error.
+func (e *HookError) Unwrap() error { return e.Err }
+
+// IsHookError checks if the error is a HookError anywhere in its chain.
+func IsHookError(err error) bool {
+	var he *HookError
+	return errors.As(err, &he)
+}

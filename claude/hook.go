@@ -132,9 +132,19 @@ func newHookRunner(hooks []HookRegistration) *hookRunner {
 }
 
 // fireHooks invokes all matching hooks for the given event and message.
-// Hooks are fired synchronously in registration order.
-// Errors from hook callbacks are silently ignored to avoid breaking the stream.
-func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Message) {
+// Hooks are fired synchronously in registration order. A hook callback
+// returning an error does not abort subsequent hooks; the error is collected
+// as a *HookError and returned. Callers are expected to surface or log these.
+func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Message) []*HookError {
+	var errs []*HookError
+
+	record := func(event HookEvent, toolName string, err error) {
+		if err == nil {
+			return
+		}
+		errs = append(errs, &HookError{Event: event, ToolName: toolName, Err: err})
+	}
+
 	// Fire HookMessage for every message.
 	for i := range hr.hooks {
 		if hr.hooks[i].event == HookMessage && hr.hooks[i].callback != nil {
@@ -143,19 +153,18 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 				SessionID: sessionID,
 				Message:   msg,
 			}
-			_, _ = hr.hooks[i].callback(ctx, input)
+			_, err := hr.hooks[i].callback(ctx, input)
+			record(HookMessage, "", err)
 		}
 	}
 
 	switch m := msg.(type) {
 	case *AssistantMessage:
-		// Track tool_use_id -> tool name mapping and fire HookPreToolUse.
 		for _, block := range m.Content {
 			tu, ok := block.(*ToolUseBlock)
 			if !ok {
 				continue
 			}
-			// Record the mapping for later PostToolUse lookup.
 			hr.toolMap[tu.ID] = tu.Name
 
 			for i := range hr.hooks {
@@ -172,18 +181,17 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 					ToolName:  tu.Name,
 					ToolInput: tu.Input,
 				}
-				_, _ = hr.hooks[i].callback(ctx, input)
+				_, err := hr.hooks[i].callback(ctx, input)
+				record(HookPreToolUse, tu.Name, err)
 			}
 		}
 
 	case *UserMessage:
-		// Fire HookPostToolUse for each ToolResultBlock.
 		for _, block := range m.Content {
 			tr, ok := block.(*ToolResultBlock)
 			if !ok {
 				continue
 			}
-			// Look up the tool name from the tracked mapping.
 			toolName := hr.toolMap[tr.ToolUseID]
 
 			for i := range hr.hooks {
@@ -200,12 +208,12 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 					ToolName:   toolName,
 					ToolOutput: tr.Content,
 				}
-				_, _ = hr.hooks[i].callback(ctx, input)
+				_, err := hr.hooks[i].callback(ctx, input)
+				record(HookPostToolUse, toolName, err)
 			}
 		}
 
 	case *ResultMessage:
-		// Fire HookResult for ResultMessage.
 		for i := range hr.hooks {
 			if hr.hooks[i].event == HookResult && hr.hooks[i].callback != nil {
 				input := HookInput{
@@ -213,10 +221,13 @@ func (hr *hookRunner) fireHooks(ctx context.Context, sessionID string, msg Messa
 					SessionID: sessionID,
 					Message:   msg,
 				}
-				_, _ = hr.hooks[i].callback(ctx, input)
+				_, err := hr.hooks[i].callback(ctx, input)
+				record(HookResult, "", err)
 			}
 		}
 	}
+
+	return errs
 }
 
 // matchToolPattern checks if a tool name matches the compiled pattern at index i.

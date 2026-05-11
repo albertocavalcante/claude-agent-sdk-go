@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/internal/transport"
@@ -86,6 +87,16 @@ func (c *ClaudeClient) Close() error {
 // one starts. This ensures only one subprocess uses the session at a time.
 //
 // Hook callbacks registered in the Options are fired for each message.
+// Hook callback errors are surfaced on the channel as *HookError values
+// after the triggering message; use IsHookError to distinguish them.
+//
+// # Backpressure
+//
+// The returned channel is buffered (capacity 10). The producer goroutine
+// blocks when the buffer is full, pausing reads from the CLI subprocess —
+// slow consumers apply natural backpressure rather than dropping messages.
+// Callers must drain the channel until it closes (or cancel ctx) to avoid
+// leaking the producer goroutine.
 func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageOrError {
 	ch := make(chan MessageOrError, 10)
 
@@ -176,15 +187,30 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 				c.mu.Unlock()
 			}
 
-			// Fire hooks.
+			// Fire hooks. Errors are surfaced on the channel as *HookError
+			// after the triggering message so callers can correlate them.
 			currentSessionID := c.SessionID()
-			runner.fireHooks(queryCtx, currentSessionID, moe.Message)
+			hookErrs := runner.fireHooks(queryCtx, currentSessionID, moe.Message)
 
 			// Forward message to caller.
 			select {
 			case ch <- moe:
 			case <-queryCtx.Done():
 				return
+			}
+
+			// Forward any hook errors after the message that triggered them.
+			for _, he := range hookErrs {
+				slog.Default().Warn("hook callback returned error",
+					"event", he.Event,
+					"tool", he.ToolName,
+					"err", he.Err,
+				)
+				select {
+				case ch <- MessageOrError{Err: he}:
+				case <-queryCtx.Done():
+					return
+				}
 			}
 		}
 	}()
