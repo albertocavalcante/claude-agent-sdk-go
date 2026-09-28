@@ -161,6 +161,9 @@ func (c *ClaudeClient) Query(ctx context.Context, prompt string) <-chan MessageO
 		}()
 
 		// Use queryWithTransport to get raw messages.
+		// This client owns hook dispatch after updating its session ID.
+		// Disable helper hooks so each callback fires only once.
+		opts.Hooks = nil
 		rawCh := queryWithTransport(queryCtx, prompt, opts, t)
 
 		// Create a hook runner to track tool mappings across this query.

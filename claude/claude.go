@@ -17,6 +17,7 @@ package claude
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/internal/transport"
@@ -62,25 +63,47 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 
 	go func() {
 		defer close(ch)
+		send := func(item MessageOrError) bool {
+			select {
+			case ch <- item:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		}
 
 		tOpts, cleanup, cfgErr := toTransportOptions(&opts)
 		defer cleanup()
 		if cfgErr != nil {
-			ch <- MessageOrError{Err: fmt.Errorf("config error: %w", cfgErr)}
+			send(MessageOrError{Err: fmt.Errorf("config error: %w", cfgErr)})
 			return
 		}
 
 		if err := t.Start(ctx, prompt, tOpts); err != nil {
-			ch <- MessageOrError{Err: err}
+			send(MessageOrError{Err: err})
 			return
 		}
 		defer t.Close()
+		runner := newHookRunner(opts.Hooks)
+		sessionID := opts.SessionID
+		lines := t.Lines()
 
-		for raw := range t.Lines() {
+		for {
+			var raw transport.RawLineOrError
+			select {
+			case item, ok := <-lines:
+				if !ok {
+					return
+				}
+				raw = item
+			case <-ctx.Done():
+				return
+			}
+			if ctx.Err() != nil {
+				return
+			}
 			if raw.Err != nil {
-				select {
-				case ch <- MessageOrError{Err: raw.Err}:
-				case <-ctx.Done():
+				if !send(MessageOrError{Err: raw.Err}) {
 					return
 				}
 				continue
@@ -88,18 +111,26 @@ func queryWithTransport(ctx context.Context, prompt string, opts Options, t tran
 
 			msg, err := ParseMessage(raw.Line)
 			if err != nil {
-				select {
-				case ch <- MessageOrError{Err: err}:
-				case <-ctx.Done():
+				if !send(MessageOrError{Err: err}) {
 					return
 				}
 				continue
 			}
 
-			select {
-			case ch <- MessageOrError{Message: msg}:
-			case <-ctx.Done():
+			if len(opts.Hooks) > 0 {
+				var envelope rawEnvelope
+				if err := json.Unmarshal(raw.Line, &envelope); err == nil && envelope.SessionID != "" {
+					sessionID = envelope.SessionID
+				}
+			}
+			hookErrs := runner.fireHooks(ctx, sessionID, msg)
+			if !send(MessageOrError{Message: msg}) {
 				return
+			}
+			for _, hookErr := range hookErrs {
+				if !send(MessageOrError{Err: hookErr}) {
+					return
+				}
 			}
 		}
 	}()
