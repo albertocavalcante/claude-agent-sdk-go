@@ -26,8 +26,8 @@ type MockTransport struct {
 	// blocks until cancelled.
 	SlowMode bool
 
-	ch      chan RawLineOrError
-	closeCh chan struct{} // signals Close was called in slow mode
+	ch        chan RawLineOrError
+	closeCh   chan struct{} // signals Close was called in slow mode
 	closeOnce sync.Once
 }
 
