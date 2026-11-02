@@ -1,4 +1,5 @@
-// Command mcp demonstrates using external MCP tools with the Claude Agent SDK.
+// Command mcp gives Claude an MCP server. The servers are written to a
+// per-client 0600 file and passed with --mcp-config.
 package main
 
 import (
@@ -7,47 +8,36 @@ import (
 	"os"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/claude"
+	"github.com/albertocavalcante/claude-agent-sdk-go/claude/config"
 )
 
 func main() {
-	client := claude.NewClient(claude.Options{
-		Model: "sonnet-4-6",
-		MCPServers: []claude.MCPServerConfig{
-			{
-				Name:    "filesystem",
-				Command: "npx",
-				Args:    []string{"-y", "@modelcontextprotocol/server-filesystem", "/tmp"},
-			},
+	if err := run(context.Background()); err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context) error {
+	client, err := claude.NewClient(ctx, claude.Options{
+		Model: "haiku",
+		MCPServers: map[string]config.MCPServer{
+			// stdio server; http and sse servers use Type, URL and Headers
+			"filesystem": {Command: "npx", Args: []string{"-y", "@modelcontextprotocol/server-filesystem", "."}},
 		},
-		Hooks: []claude.HookRegistration{
-			{
-				Event: claude.HookPreToolUse,
-				Callback: func(ctx context.Context, event claude.HookInput) (claude.HookOutput, error) {
-					fmt.Printf("[mcp] Tool: %s\n", event.ToolName)
-					return claude.HookOutput{}, nil
-				},
-			},
-		},
+		StrictMCPConfig: true, // ignore every other MCP source
 	})
-
-	ctx := context.Background()
-	prompt := "List the files in /tmp using the filesystem tools"
-	if len(os.Args) > 1 {
-		prompt = os.Args[1]
+	if err != nil {
+		return err
 	}
+	defer func() { _ = client.Close() }()
 
-	for msg := range client.Query(ctx, prompt) {
-		if msg.Err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", msg.Err)
-			os.Exit(1)
-		}
-		if am, ok := msg.Message.(*claude.AssistantMessage); ok {
-			for _, block := range am.Content {
-				if tb, ok := block.(*claude.TextBlock); ok {
-					fmt.Print(tb.Text)
-				}
-			}
-		}
+	status, err := client.MCPStatus(ctx)
+	if err != nil {
+		return err
 	}
-	fmt.Println()
+	for i := range status.MCPServers {
+		fmt.Printf("%s: %s\n", status.MCPServers[i].Name, status.MCPServers[i].Status)
+	}
+	return nil
 }

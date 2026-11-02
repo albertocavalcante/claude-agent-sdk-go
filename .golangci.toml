@@ -1,16 +1,45 @@
+version = "2"
+
 [linters]
 enable = [
+  "bodyclose",
+  "copyloopvar",
   "errcheck",
-  "govet",
-  "staticcheck",
-  "unused",
-  "ineffassign",
   "gocritic",
+  "gosec",
+  "govet",
+  "ineffassign",
+  "intrange",
   "misspell",
+  "nakedret",
+  "noctx",
+  "nolintlint",
+  "prealloc",
+  "staticcheck",
   "unconvert",
   "unparam",
+  "unused",
   "whitespace",
 ]
+
+[linters.settings.gocritic]
+enabled-tags = ["diagnostic", "style", "performance"]
+disabled-checks = ["hugeParam", "ptrToRefParam", "unnamedResult", "paramTypeCombine", "emptyStringTest", "deferInLoop"]
+
+[linters.settings.nolintlint]
+require-explanation = true
+require-specific = true
+
+[linters.exclusions]
+generated = "lax"
+
+[[linters.exclusions.rules]]
+path = "_test\\.go"
+linters = ["gosec", "errcheck", "unparam", "prealloc", "gocritic", "noctx"]
+
+[[linters.exclusions.rules]]
+path = "scripts/"
+linters = ["gosec", "unparam"]
 
 [formatters]
 enable = ["gofmt", "goimports"]

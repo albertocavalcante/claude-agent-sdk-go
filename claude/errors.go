@@ -3,93 +3,74 @@ package claude
 import (
 	"errors"
 	"fmt"
+	"regexp"
+	"strings"
+
+	"github.com/albertocavalcante/claude-agent-sdk-go/claude/protocol"
 )
 
-// CLIError indicates the Claude CLI returned an error message.
-type CLIError struct {
+var (
+	// ErrClosed is returned by operations on a Client after Close, or when
+	// input was closed.
+	ErrClosed = errors.New("claude: client closed")
+	// ErrDetached is returned by operations on a Client after Detach.
+	ErrDetached = errors.New("claude: client detached")
+	// ErrInitializeTimeout means the CLI did not answer initialize in time.
+	ErrInitializeTimeout = errors.New("claude: initialize timed out")
+)
+
+// ControlError is an error control_response from the CLI.
+type ControlError struct {
+	Subtype string // the request subtype that failed
 	Message string
-	Stderr  string
+	Code    string // the CLI's error_code, if any
 }
 
-func (e *CLIError) Error() string {
-	if e.Stderr != "" {
-		return fmt.Sprintf("claude cli error: %s (stderr: %s)", e.Message, e.Stderr)
-	}
-	return fmt.Sprintf("claude cli error: %s", e.Message)
+func (e *ControlError) Error() string {
+	return fmt.Sprintf("claude: control request %q failed: %s", e.Subtype, e.Message)
 }
 
-// ProtocolError indicates a failure to parse the CLI's JSON output.
-type ProtocolError struct {
-	Message string
-	Raw     []byte
-}
-
-func (e *ProtocolError) Error() string {
-	if len(e.Raw) > 0 {
-		return fmt.Sprintf("protocol error: %s (raw: %s)", e.Message, string(e.Raw))
-	}
-	return fmt.Sprintf("protocol error: %s", e.Message)
-}
-
-// ProcessError indicates the CLI subprocess exited abnormally.
+// ProcessError means the CLI exited abnormally without a preceding error
+// result (crash, bad flags, killed). StderrTail holds the last bytes of stderr.
 type ProcessError struct {
-	Message  string
-	ExitCode int
+	ExitCode   int
+	Signal     string
+	StderrTail string
 }
 
 func (e *ProcessError) Error() string {
-	return fmt.Sprintf("process error (exit %d): %s", e.ExitCode, e.Message)
-}
-
-// IsProcessError checks if the error is a ProcessError.
-func IsProcessError(err error) bool {
-	var pe *ProcessError
-	return errors.As(err, &pe)
-}
-
-// IsCLIError checks if the error is a CLIError.
-func IsCLIError(err error) bool {
-	var ce *CLIError
-	return errors.As(err, &ce)
-}
-
-// IsProtocolError checks if the error is a ProtocolError.
-func IsProtocolError(err error) bool {
-	var pe *ProtocolError
-	return errors.As(err, &pe)
-}
-
-// ExitCode extracts the exit code from a ProcessError in the error chain.
-// Returns -1 if the error is not a ProcessError.
-func ExitCode(err error) int {
-	var pe *ProcessError
-	if errors.As(err, &pe) {
-		return pe.ExitCode
+	what := fmt.Sprintf("exit code %d", e.ExitCode)
+	if e.Signal != "" {
+		what = "signal " + e.Signal
 	}
-	return -1
-}
-
-// HookError wraps an error returned by a user-supplied hook callback.
-// It carries enough context to identify which hook fired and on which tool,
-// so callers can route or filter hook failures without parsing strings.
-type HookError struct {
-	Event    HookEvent
-	ToolName string // empty for non-tool events (Message, Result)
-	Err      error
-}
-
-func (e *HookError) Error() string {
-	if e.ToolName != "" {
-		return fmt.Sprintf("hook %s for tool %q failed: %v", e.Event, e.ToolName, e.Err)
+	if last := lastLine(e.StderrTail); last != "" {
+		return fmt.Sprintf("claude: CLI exited (%s); last stderr line: %s", what, last)
 	}
-	return fmt.Sprintf("hook %s failed: %v", e.Event, e.Err)
+	return fmt.Sprintf("claude: CLI exited (%s)", what)
 }
 
-// Unwrap returns the underlying hook callback error.
-func (e *HookError) Unwrap() error { return e.Err }
+var secretRE = regexp.MustCompile(`(?i)(sk-ant-[A-Za-z0-9_-]+|bearer\s+\S+|["']?(?:authorization|[a-z_-]*(?:token|api[-_]?key|secret|passw(?:or)?d))["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|basic\s+\S+|\S+))`)
 
-// IsHookError checks if the error is a HookError anywhere in its chain.
-func IsHookError(err error) bool {
-	var he *HookError
-	return errors.As(err, &he)
+// lastLine returns the last non-empty line, secrets masked and cut to 200 bytes.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	l := strings.TrimSpace(lines[len(lines)-1])
+	l = secretRE.ReplaceAllString(l, "<redacted>")
+	if len(l) > 200 {
+		l = l[:200] + "..."
+	}
+	return l
+}
+
+// ResultError means the CLI exited with code 1 after an error result (for
+// example after an interrupted turn and end of input). It is not a transport
+// failure: Result carries what the CLI reported.
+type ResultError struct {
+	Result   *protocol.Result
+	ExitCode int
+}
+
+func (e *ResultError) Error() string {
+	return fmt.Sprintf("claude: run ended with error result (subtype %q, terminal reason %q, exit code %d)",
+		e.Result.Subtype, e.Result.TerminalReason, e.ExitCode)
 }
