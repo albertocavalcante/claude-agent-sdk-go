@@ -1,4 +1,4 @@
-// Command simple demonstrates a basic one-shot query using the Claude Agent SDK.
+// Command simple runs a one-shot prompt and prints the answer.
 package main
 
 import (
@@ -7,29 +7,21 @@ import (
 	"os"
 
 	"github.com/albertocavalcante/claude-agent-sdk-go/claude"
+	"github.com/albertocavalcante/claude-agent-sdk-go/claude/protocol"
 )
 
 func main() {
 	ctx := context.Background()
-
-	for msg := range claude.Query(ctx, "What is 2+2? Reply in one word.", claude.Options{
-		Model: "haiku",
-	}) {
-		if msg.Err != nil {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", msg.Err)
+	for msg, err := range claude.Query(ctx, "What is 2+2? Reply in one word.", claude.Options{Model: "haiku"}) {
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-
-		switch m := msg.Message.(type) {
-		case *claude.AssistantMessage:
-			for _, block := range m.Content {
-				if tb, ok := block.(*claude.TextBlock); ok {
-					fmt.Print(tb.Text)
-				}
-			}
-		case *claude.ResultMessage:
-			fmt.Printf("\n---\nTokens: %d in, %d out | Cost: $%.4f\n",
-				m.InputTokens, m.OutputTokens, m.Cost)
+		switch m := msg.(type) {
+		case *protocol.Assistant:
+			fmt.Print(m.Text())
+		case *protocol.Result:
+			fmt.Printf("\n---\nturns: %d, cost: $%.4f\n", m.NumTurns, m.TotalCostUSD)
 		}
 	}
 }

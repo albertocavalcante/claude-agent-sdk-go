@@ -1,29 +1,52 @@
-# Default recipe
-default: check
+# claude-agent-sdk-go
+# Run `just` to list recipes.
+
+set dotenv-load := false
+
+default:
+    @just --list --unsorted
 
 # Format code
 fmt:
     gofmt -w .
 
-# Check formatting
+# Fail if any file needs gofmt
 fmt-check:
-    @test -z "$(gofmt -l .)" || (echo "Files need formatting:" && gofmt -l . && exit 1)
+    @test -z "$(gofmt -l .)" || (echo "gofmt needed on:"; gofmt -l .; exit 1)
 
-# Run linter
-lint:
+# go vet, also with the live-suite build tag
+vet:
     go vet ./...
+    go vet -tags claudecli ./...
+
+# golangci-lint v2 from the tools/lint tool module
+lint:
+    go tool -modfile=tools/lint/go.mod golangci-lint run
+    go tool -modfile=tools/lint/go.mod golangci-lint run --build-tags claudecli
 
 # Run tests
 test:
+    go test -count=1 ./...
+
+# Run tests with the race detector
+test-race:
     go test -race -count=1 ./...
 
-# Run tests with verbose output
-test-v:
-    go test -race -count=1 -v ./...
+# Run each fuzz target briefly
+fuzz-smoke:
+    ./scripts/fuzz-smoke.sh
 
-# Build all packages
-build:
-    go build ./...
+# Live suite against a real CLI (needs CLAUDE_CODE_OAUTH_TOKEN; costs a few cents)
+live:
+    CLAUDE_LIVE=1 go test -tags claudecli -run Live -count=1 -v ./claude/
 
-# Run all checks (format, lint, test, build)
-check: fmt-check lint test build
+# Tidy Go modules
+tidy:
+    go mod tidy
+    cd tools/lint && go mod tidy
+
+# Everything CI runs
+ci: fmt-check vet lint test-race fuzz-smoke
+
+# Quick local checks
+check: fmt-check vet test
